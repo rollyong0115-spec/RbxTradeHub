@@ -1,0 +1,22 @@
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+const gate=$('authGate'), msg=$('authMessage'), setup=$('authSetup'), form=$('authForm'), recovery=$('authRecovery');
+let client=null,mode='login',busy=false,resetMode=false;
+function say(t,error=false){msg.textContent=t;msg.className='notice'+(error?' error':'');}
+function working(v){busy=v;['authSubmit','authSwitch','authReset','authSavePassword'].forEach(id=>$(id).disabled=v);}
+function showMode(m){mode=m;$('authNameWrap').classList.toggle('authHidden',m!=='register');$('authSubmit').textContent=m==='register'?'Create account':'Log in';$('authSwitch').textContent=m==='register'?'Back to login':'Create account';$('authPassword').autocomplete=m==='register'?'new-password':'current-password';say('');}
+function loggedIn(user){gate.hidden=true;$('accountDock').style.display='block';const label=user.user_metadata?.display_name||user.email?.split('@')[0]||'Trader';$('accountLabel').textContent=label;try{ME=label;render();}catch(e){console.warn(e)}}
+function loggedOut(){gate.hidden=false;$('accountDock').style.display='none';$('authPassword').value='';if(!resetMode){form.classList.remove('authHidden');recovery.classList.add('authHidden')}}
+const config=window.RBX_SUPABASE_CONFIG||{};
+if(!config.url||!config.key||config.url.includes('YOUR_')||config.key.includes('YOUR_')){setup.classList.remove('authHidden');form.classList.add('authHidden');say('Configure Supabase before publishing.');return;}
+if(!window.supabase?.createClient){say('Could not load Supabase. Check your internet connection and reload.',true);return;}
+try{client=window.supabase.createClient(config.url,config.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}})}catch(e){say('Invalid Supabase configuration: '+e.message,true);return;}
+client.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'){resetMode=true;gate.hidden=false;form.classList.add('authHidden');recovery.classList.remove('authHidden');say('Set a new password below.');return;}if(session?.user&&!resetMode)loggedIn(session.user);else if(!session?.user)loggedOut();});
+client.auth.getSession().then(({data,error})=>{if(error)say(error.message,true);else if(data.session?.user&&!resetMode)loggedIn(data.session.user);else loggedOut()}).catch(e=>say(e.message,true));
+$('authSwitch').onclick=()=>showMode(mode==='login'?'register':'login');
+$('authSubmit').onclick=async()=>{if(busy)return;const email=$('authEmail').value.trim(),password=$('authPassword').value,name=$('authName').value.trim();if(!email||!password){say('Enter your email and password.',true);return}if(mode==='register'&&(!name||password.length<8)){say('Enter a display name and password of at least 8 characters.',true);return}working(true);try{if(mode==='register'){const {data,error}=await client.auth.signUp({email,password,options:{data:{display_name:name},emailRedirectTo:location.origin+location.pathname}});if(error)throw error;if(data.session)loggedIn(data.user);else say('Check your email for a confirmation link, then return to log in.');}else{const {error}=await client.auth.signInWithPassword({email,password});if(error)throw error;}}catch(e){say(e.message,true)}finally{working(false)}};
+$('authReset').onclick=async()=>{const email=$('authEmail').value.trim();if(!email){say('Enter your email address first.',true);return}working(true);try{const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});if(error)throw error;say('If the account exists, a password reset email will arrive.')}catch(e){say(e.message,true)}finally{working(false)}};
+$('authSavePassword').onclick=async()=>{const password=$('authNewPassword').value;if(password.length<8){say('Use at least 8 characters.',true);return}working(true);try{const {error}=await client.auth.updateUser({password});if(error)throw error;resetMode=false;recovery.classList.add('authHidden');form.classList.remove('authHidden');say('Password updated.');const {data}=await client.auth.getUser();if(data.user)loggedIn(data.user)}catch(e){say(e.message,true)}finally{working(false)}};
+$('authLogout').onclick=async()=>{const {error}=await client.auth.signOut();if(error)alert(error.message);else loggedOut()};
+})();
